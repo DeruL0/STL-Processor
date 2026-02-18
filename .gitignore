@@ -1,0 +1,35 @@
+# Visual Studio build outputs
+*.exe
+*.ilk
+*.pdb
+*.obj
+*.lib
+*.exp
+*.dll
+*.idb
+x64/
+Debug/
+Release/
+ipch/
+*.VC.db
+*.VC.opendb
+
+# Visual Studio files
+.vs/
+*.user
+*.suo
+*.sdf
+*.opensdf
+*.vcxproj.FileListAbsolute.txt
+*.recipe
+RCa*
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# Compiled shaders
+*.cso
+
+# Textures / large binary assets (optional – remove if you want them tracked)
+*.dds
