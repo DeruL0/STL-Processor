@@ -19,7 +19,7 @@ struct MaterialData{
     float Roughness;
     float4x4 MatTransform;
     uint DiffuseMapIndex;
-    uint MatPad0;
+    uint UseDiffuseTexture;
     uint MatPad1;
     uint MatPad2;
 };
@@ -119,7 +119,9 @@ float4 PS(VertexOut pin) : SV_Target{
     uint diffuseTexIndex = matData.DiffuseMapIndex;
 
 	// Dynamically look up the texture in the array.
-    diffuseAlbedo *= diffuseMap[diffuseTexIndex].Sample(samLinearWrap, pin.TexC);
+    if (matData.UseDiffuseTexture != 0) {
+        diffuseAlbedo *= diffuseMap[diffuseTexIndex].Sample(samLinearWrap, pin.TexC);
+    }
     
     //对法线进行规范化，因为对其插值可能导致其非规范化
     pin.NormalW = normalize(pin.NormalW);

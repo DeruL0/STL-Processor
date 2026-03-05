@@ -1,6 +1,5 @@
 ﻿#include "HalfEdgeStructure.h"
 
-
 //File Operations==========================================================================================================================
 void HE_MeshData::ReadSTL(std::string file_path, std::string file_name) {
 	file_path.append(file_name);
@@ -316,14 +315,23 @@ std::vector<HE_Edge*> HE_MeshData::GetEdgesFromEdge(const HE_Edge* edge) {
 
 
 std::vector<HE_Triangle*> HE_MeshData::GetTrianglesFromTriangle(const HE_Triangle* triangle) {
+	std::vector<HE_Triangle*> facets;
+	if (triangle == nullptr || triangle->Edge == nullptr) {
+		return facets;
+	}
+
 	HE_Edge* edge = triangle->Edge;
 	HE_Edge* temp = edge;
-	std::vector<HE_Triangle*> facets;
 
 	do {
-		facets.push_back(temp->Pair->Triangle);
+		if (temp == nullptr || temp->Pair == nullptr) {
+			break;
+		}
+		if (temp->Pair->Triangle != nullptr) {
+			facets.push_back(temp->Pair->Triangle);
+		}
 		temp = temp->Next;
-	} while (temp != edge);
+	} while (temp != nullptr && temp != edge);
 
 	return facets;
 }
@@ -331,9 +339,14 @@ std::vector<HE_Triangle*> HE_MeshData::GetTrianglesFromTriangle(const HE_Triangl
 std::vector<HE_Triangle*> HE_MeshData::GetTrianglesFromVertex(const HE_Vertex* vertex) {
 	std::vector<HE_Edge*> edges = GetEdgesFromVertex(vertex);
 	std::vector<HE_Triangle*> triangles;
+	triangles.reserve(edges.size());
 
 	for (std::int32_t i = 0; i < edges.size(); i++) {
-		triangles.push_back(edges[i]->Triangle);
+		HE_Edge* edge = edges[i];
+		if (edge == nullptr || edge->Triangle == nullptr) {
+			continue;
+		}
+		triangles.push_back(edge->Triangle);
 	}
 
 	return triangles;
@@ -458,6 +471,9 @@ int HE_MeshData::GetIntersection(HE_Triangle* triangle) {
 			DirectX::XMFLOAT3 S2 = MathHelper::CrossVector(S, E1);
 
 			float S1E1 = MathHelper::DotVector(S1, E1);
+			if (S1E1 > -1e-8f && S1E1 < 1e-8f) {
+				continue;
+			}
 			float t = MathHelper::DotVector(S2, E2) / S1E1;
 			float b1 = MathHelper::DotVector(S1, S) / S1E1;
 			float b2 = MathHelper::DotVector(S2, dir) / S1E1;
@@ -613,12 +629,16 @@ void HE_MeshData::DenoiseHelper(float T) {
 		*/
 
 		for (int j = 0; j < neighbors.size(); j++){
-			float temp = MathHelper::DotVector(HE_Triangles[i]->Normal, neighbors[j]->Normal);
+			HE_Triangle* neighbor = neighbors[j];
+			if (neighbor == nullptr) {
+				continue;
+			}
+			float temp = MathHelper::DotVector(HE_Triangles[i]->Normal, neighbor->Normal);
 			float weight = temp > T ? pow(temp - T, 2) : 0;
 
-			normal_expect.x += weight * neighbors[j]->Normal.x;
-			normal_expect.y += weight * neighbors[j]->Normal.y;
-			normal_expect.z += weight * neighbors[j]->Normal.z;
+			normal_expect.x += weight * neighbor->Normal.x;
+			normal_expect.y += weight * neighbor->Normal.y;
+			normal_expect.z += weight * neighbor->Normal.z;
 		}
 
 		expect_normals.push_back(normal_expect);
@@ -626,29 +646,46 @@ void HE_MeshData::DenoiseHelper(float T) {
 
 	for (std::int32_t i = 0; i < HE_Vertexes.size(); i++){
 		std::vector<HE_Triangle*> neighbors = GetTrianglesFromVertex(HE_Vertexes[i]);
+		if (neighbors.empty()) {
+			continue;
+		}
 		DirectX::XMFLOAT3 move = DirectX::XMFLOAT3(0.0f, 0.0f, 0.0f);
+		int validNeighbors = 0;
 
 		for (int j = 0; j < neighbors.size(); j++){
+			HE_Triangle* neighbor = neighbors[j];
+			if (neighbor == nullptr) {
+				continue;
+			}
+			if (neighbor->Index < 0 || neighbor->Index >= static_cast<std::int32_t>(expect_normals.size())) {
+				continue;
+			}
 			DirectX::XMFLOAT3 centroid = DirectX::XMFLOAT3(
-				(HE_Vertexes[neighbors[j]->VertexIndex0]->Pos.x + HE_Vertexes[neighbors[j]->VertexIndex1]->Pos.x + HE_Vertexes[neighbors[j]->VertexIndex2]->Pos.x) / 3,
-				(HE_Vertexes[neighbors[j]->VertexIndex0]->Pos.y + HE_Vertexes[neighbors[j]->VertexIndex1]->Pos.y + HE_Vertexes[neighbors[j]->VertexIndex2]->Pos.y) / 3,
-				(HE_Vertexes[neighbors[j]->VertexIndex0]->Pos.z + HE_Vertexes[neighbors[j]->VertexIndex1]->Pos.z + HE_Vertexes[neighbors[j]->VertexIndex2]->Pos.z) / 3
+				(HE_Vertexes[neighbor->VertexIndex0]->Pos.x + HE_Vertexes[neighbor->VertexIndex1]->Pos.x + HE_Vertexes[neighbor->VertexIndex2]->Pos.x) / 3,
+				(HE_Vertexes[neighbor->VertexIndex0]->Pos.y + HE_Vertexes[neighbor->VertexIndex1]->Pos.y + HE_Vertexes[neighbor->VertexIndex2]->Pos.y) / 3,
+				(HE_Vertexes[neighbor->VertexIndex0]->Pos.z + HE_Vertexes[neighbor->VertexIndex1]->Pos.z + HE_Vertexes[neighbor->VertexIndex2]->Pos.z) / 3
 			);
 
 			DirectX::XMFLOAT3 diff = DirectX::XMFLOAT3(
 				centroid.x - HE_Vertexes[i]->Pos.x, centroid.y - HE_Vertexes[i]->Pos.y, centroid.z - HE_Vertexes[i]->Pos.z
 			);
 
-			float weight = MathHelper::DotVector(expect_normals[neighbors[j]->Index], diff);
+			float weight = MathHelper::DotVector(expect_normals[neighbor->Index], diff);
 
 			DirectX::XMFLOAT3 step = DirectX::XMFLOAT3(
-				weight * expect_normals[neighbors[j]->Index].x, weight * expect_normals[neighbors[j]->Index].y, weight * expect_normals[neighbors[j]->Index].z
+				weight * expect_normals[neighbor->Index].x, weight * expect_normals[neighbor->Index].y, weight * expect_normals[neighbor->Index].z
 			);
 
 			move.x += step.x; move.y += step.y; move.z += step.z;
+			validNeighbors++;
 		}
 
-		move.x /= neighbors.size(); move.y /= neighbors.size(); move.z /= neighbors.size();
+		if (validNeighbors == 0) {
+			continue;
+		}
+		move.x /= validNeighbors;
+		move.y /= validNeighbors;
+		move.z /= validNeighbors;
 		HE_Vertexes[i]->Pos.x = HE_Vertexes[i]->Pos.x + move.x;
 		HE_Vertexes[i]->Pos.y = HE_Vertexes[i]->Pos.y + move.y;
 		HE_Vertexes[i]->Pos.z = HE_Vertexes[i]->Pos.z + move.z;
@@ -684,6 +721,7 @@ void HE_MeshData::Smoothing(int fairingNum, FMETHOD fairing) {
 
 //Holes Filling==========================================================================================================================
 void HE_MeshData::HolesFilling(METHOD method, RMETHOD refinement, FMETHOD fairing, int fairingNum) {
+	BoundaryLoops.clear();
 	HolesIdentification();
 
 	for (auto boundaryLoop : BoundaryLoops){
@@ -735,12 +773,43 @@ void HE_MeshData::HolesFillingHelper(std::vector<std::int32_t>& boundaryLoop, ME
 	std::vector<std::vector<std::int32_t>> triangles;
 	std::vector<std::vector<float>> A;
 	std::vector<std::vector<std::int32_t>> ls;
-	
-	for (int i = boundaryLoop.size() - 1; i > 0; i--){
+
+	const std::int32_t n = static_cast<std::int32_t>(boundaryLoop.size());
+	if (n < 3) {
+		return;
+	}
+	{
+		std::unordered_set<std::int32_t> uniqueBoundaryVertices;
+		uniqueBoundaryVertices.reserve(boundaryLoop.size());
+		for (std::int32_t vertexIndex : boundaryLoop) {
+			if (vertexIndex < 0 || static_cast<std::size_t>(vertexIndex) >= HE_Vertexes.size()) {
+				return;
+			}
+			if (!uniqueBoundaryVertices.insert(vertexIndex).second) {
+				return;
+			}
+		}
+
+		for (std::int32_t i = 0; i < n; i++) {
+			const std::int32_t v0 = boundaryLoop[i];
+			const std::int32_t v1 = boundaryLoop[(i + 1) % n];
+
+			const auto hasBoundaryHalfEdge = [&](std::int32_t start, std::int32_t end) -> bool {
+				auto edgeIt = HE_Edges.find(std::make_pair(start, end));
+				return edgeIt != HE_Edges.end() && edgeIt->second != nullptr && edgeIt->second->Triangle == nullptr;
+			};
+
+			if (!hasBoundaryHalfEdge(v0, v1) && !hasBoundaryHalfEdge(v1, v0)) {
+				return;
+			}
+		}
+	}
+
+	for (int i = n - 1; i > 0; i--){
 		std::vector<float> vec(i);
 		A.push_back(vec);
 
-		if (i >= boundaryLoop.size() - 2){
+		if (i >= n - 2){
 			std::vector<std::int32_t> v;
 			ls.push_back(v);
 		}
@@ -750,13 +819,235 @@ void HE_MeshData::HolesFillingHelper(std::vector<std::int32_t>& boundaryLoop, ME
 		}
 	}
 
+	// Step 1 in the paper: initialize base triangle areas.
+	if (A.size() > 1) {
+		for (std::int32_t i = 0; i < n - 2; i++) {
+			DirectX::XMFLOAT3 v0 = HE_Vertexes[boundaryLoop[i]]->Pos;
+			DirectX::XMFLOAT3 v1 = HE_Vertexes[boundaryLoop[i + 1]]->Pos;
+			DirectX::XMFLOAT3 v2 = HE_Vertexes[boundaryLoop[i + 2]]->Pos;
+			A[1][i] = MathHelper::GetTriArea(v0, v1, v2);
+		}
+	}
+
 	//Triangulation
 	if (method == ANGLE) {
-		
+		struct AngleWeight {
+			float MaxDihedral = 0.0f;
+			float Area = 0.0f;
+		};
+
+		constexpr float kAngleEps = 1e-6f;
+		constexpr float kPi = 3.14159265358979323846f;
+		const auto getBoundaryPos = [&](std::int32_t localIndex) -> const DirectX::XMFLOAT3& {
+			return HE_Vertexes[boundaryLoop[localIndex]]->Pos;
+		};
+		const auto triAreaFromLocal = [&](std::int32_t i0, std::int32_t i1, std::int32_t i2) -> float {
+			return MathHelper::GetTriArea(getBoundaryPos(i0), getBoundaryPos(i1), getBoundaryPos(i2));
+		};
+		const auto triangleOppositePos = [&](const HE_Triangle* tri, std::int32_t shared0, std::int32_t shared1, DirectX::XMFLOAT3& posOut) -> bool {
+			if (tri == nullptr) {
+				return false;
+			}
+			if (tri->VertexIndex0 < 0 || tri->VertexIndex1 < 0 || tri->VertexIndex2 < 0) {
+				return false;
+			}
+			const std::size_t v0 = static_cast<std::size_t>(tri->VertexIndex0);
+			const std::size_t v1 = static_cast<std::size_t>(tri->VertexIndex1);
+			const std::size_t v2 = static_cast<std::size_t>(tri->VertexIndex2);
+			if (v0 >= HE_Vertexes.size() || v1 >= HE_Vertexes.size() || v2 >= HE_Vertexes.size()) {
+				return false;
+			}
+
+			const std::int32_t vertices[3] = { tri->VertexIndex0, tri->VertexIndex1, tri->VertexIndex2 };
+			bool hasShared0 = false;
+			bool hasShared1 = false;
+			std::int32_t oppositeVertex = -1;
+
+			for (std::int32_t vertexIndex : vertices) {
+				if (vertexIndex == shared0) {
+					hasShared0 = true;
+				}
+				else if (vertexIndex == shared1) {
+					hasShared1 = true;
+				}
+				else {
+					oppositeVertex = vertexIndex;
+				}
+			}
+
+			if (!hasShared0 || !hasShared1 || oppositeVertex < 0) {
+				return false;
+			}
+
+			posOut = HE_Vertexes[oppositeVertex]->Pos;
+			return true;
+		};
+		const auto boundaryAdjacentOppositePos = [&](std::int32_t i0, std::int32_t i1, DirectX::XMFLOAT3& posOut) -> bool {
+			const std::int32_t vStart = boundaryLoop[i0];
+			const std::int32_t vEnd = boundaryLoop[i1];
+
+			const auto tryEdge = [&](std::int32_t a, std::int32_t b) -> bool {
+				auto edgeIt = HE_Edges.find(std::make_pair(a, b));
+				if (edgeIt == HE_Edges.end() || edgeIt->second == nullptr) {
+					return false;
+				}
+				HE_Edge* edge = edgeIt->second;
+				if (triangleOppositePos(edge->Triangle, a, b, posOut)) {
+					return true;
+				}
+				if (edge->Pair != nullptr && triangleOppositePos(edge->Pair->Triangle, a, b, posOut)) {
+					return true;
+				}
+				return false;
+			};
+
+			if (tryEdge(vStart, vEnd)) {
+				return true;
+			}
+			return tryEdge(vEnd, vStart);
+		};
+		const auto dpAdjacentOppositeVertex = [&](std::int32_t i0, std::int32_t i1, std::int32_t& oppositeLocal) -> bool {
+			const std::int32_t d = i1 - i0;
+			if (d <= 1) {
+				return false;
+			}
+
+			std::int32_t split = i0 + 1;
+			if (d > 2) {
+				split = ls[d - 1][i0];
+			}
+			if (split <= i0 || split >= i1) {
+				return false;
+			}
+			oppositeLocal = split;
+			return true;
+		};
+		// Compare the two face planes around their shared edge instead of using stored face winding.
+		const auto edgeDihedral = [&](std::int32_t edgeLocal0, std::int32_t edgeLocal1, const DirectX::XMFLOAT3& opposite0, const DirectX::XMFLOAT3& opposite1) -> float {
+			const DirectX::XMFLOAT3 edgeStart = getBoundaryPos(edgeLocal0);
+			const DirectX::XMFLOAT3 edgeEnd = getBoundaryPos(edgeLocal1);
+			const DirectX::XMFLOAT3 edgeVector = MathHelper::SubVector(edgeEnd, edgeStart);
+			const float edgeLength = std::sqrt(edgeVector.x * edgeVector.x + edgeVector.y * edgeVector.y + edgeVector.z * edgeVector.z);
+			if (edgeLength <= FLT_EPSILON) {
+				return 0.0f;
+			}
+
+			const DirectX::XMFLOAT3 edgeUnit = DirectX::XMFLOAT3(edgeVector.x / edgeLength, edgeVector.y / edgeLength, edgeVector.z / edgeLength);
+			const auto projectAroundEdge = [&](const DirectX::XMFLOAT3& point) -> DirectX::XMFLOAT3 {
+				const DirectX::XMFLOAT3 offset = MathHelper::SubVector(point, edgeStart);
+				const float alongEdge = MathHelper::DotVector(offset, edgeUnit);
+				return DirectX::XMFLOAT3(
+					offset.x - alongEdge * edgeUnit.x,
+					offset.y - alongEdge * edgeUnit.y,
+					offset.z - alongEdge * edgeUnit.z
+				);
+			};
+
+			const DirectX::XMFLOAT3 radial0 = projectAroundEdge(opposite0);
+			const DirectX::XMFLOAT3 radial1 = projectAroundEdge(opposite1);
+			const float radialLength0 = std::sqrt(radial0.x * radial0.x + radial0.y * radial0.y + radial0.z * radial0.z);
+			const float radialLength1 = std::sqrt(radial1.x * radial1.x + radial1.y * radial1.y + radial1.z * radial1.z);
+			if (radialLength0 <= FLT_EPSILON || radialLength1 <= FLT_EPSILON) {
+				return 0.0f;
+			}
+
+			float cosine = MathHelper::DotVector(radial0, radial1) / (radialLength0 * radialLength1);
+			cosine = std::max(-1.0f, std::min(1.0f, cosine));
+			return kPi - std::acos(cosine);
+		};
+		const auto betterWeight = [&](const AngleWeight& lhs, const AngleWeight& rhs) -> bool {
+			if (lhs.MaxDihedral + kAngleEps < rhs.MaxDihedral) {
+				return true;
+			}
+			if (rhs.MaxDihedral + kAngleEps < lhs.MaxDihedral) {
+				return false;
+			}
+			return lhs.Area + kAngleEps < rhs.Area;
+		};
+
+		std::vector<std::vector<AngleWeight>> W;
+		W.reserve(A.size());
+		for (const auto& row : A) {
+			W.emplace_back(row.size());
+		}
+
+		// Step 1: initialize W(i, i+1) = (0,0), and W(i, i+2) = Omega(i,i+1,i+2).
+		if (W.size() > 1) {
+			for (std::int32_t i = 0; i < n - 2; i++) {
+				float mu = 0.0f;
+				DirectX::XMFLOAT3 adjacentOpposite;
+				if (boundaryAdjacentOppositePos(i, i + 1, adjacentOpposite)) {
+					mu = std::max(mu, edgeDihedral(i, i + 1, getBoundaryPos(i + 2), adjacentOpposite));
+				}
+				if (boundaryAdjacentOppositePos(i + 1, i + 2, adjacentOpposite)) {
+					mu = std::max(mu, edgeDihedral(i + 1, i + 2, getBoundaryPos(i), adjacentOpposite));
+				}
+
+				W[1][i].MaxDihedral = mu;
+				W[1][i].Area = triAreaFromLocal(i, i + 1, i + 2);
+			}
+		}
+
+		// Step 2: dynamic programming over increasing subpolygon size.
+		for (std::int32_t d = 3; d < n; d++) {
+			for (std::int32_t i = 0; i < n - d; i++) {
+				const std::int32_t k = i + d;
+				AngleWeight best;
+				best.MaxDihedral = FLT_MAX;
+				best.Area = FLT_MAX;
+				std::int32_t bestSplit = i + 1;
+
+				for (std::int32_t split = 0; split < d - 1; split++) {
+					const std::int32_t m = i + split + 1;
+
+					float mu = 0.0f;
+					DirectX::XMFLOAT3 adjacentOpposite;
+					std::int32_t adjacentOppositeLocal = -1;
+
+					if (m - i > 1) {
+						if (dpAdjacentOppositeVertex(i, m, adjacentOppositeLocal)) {
+							mu = std::max(mu, edgeDihedral(i, m, getBoundaryPos(k), getBoundaryPos(adjacentOppositeLocal)));
+						}
+					}
+					else if (boundaryAdjacentOppositePos(i, m, adjacentOpposite)) {
+						mu = std::max(mu, edgeDihedral(i, m, getBoundaryPos(k), adjacentOpposite));
+					}
+
+					if (k - m > 1) {
+						if (dpAdjacentOppositeVertex(m, k, adjacentOppositeLocal)) {
+							mu = std::max(mu, edgeDihedral(m, k, getBoundaryPos(i), getBoundaryPos(adjacentOppositeLocal)));
+						}
+					}
+					else if (boundaryAdjacentOppositePos(m, k, adjacentOpposite)) {
+						mu = std::max(mu, edgeDihedral(m, k, getBoundaryPos(i), adjacentOpposite));
+					}
+
+					if (i == 0 && k == n - 1 && boundaryAdjacentOppositePos(i, k, adjacentOpposite)) {
+						mu = std::max(mu, edgeDihedral(i, k, getBoundaryPos(m), adjacentOpposite));
+					}
+
+					const AngleWeight& left = W[m - i - 1][i];
+					const AngleWeight& right = W[k - m - 1][m];
+
+					AngleWeight candidate;
+					candidate.MaxDihedral = std::max(mu, std::max(left.MaxDihedral, right.MaxDihedral));
+					candidate.Area = left.Area + right.Area + triAreaFromLocal(i, m, k);
+
+					if (betterWeight(candidate, best)) {
+						best = candidate;
+						bestSplit = m;
+					}
+				}
+
+				ls[d - 1][i] = bestSplit;
+				W[d - 1][i] = best;
+				A[d - 1][i] = best.Area;
+			}
+		}
 	}
 	else if(method == AREA) {
-		for (std::int32_t i = 3; i < boundaryLoop.size(); i++){
-			for (std::int32_t j = 0; j < boundaryLoop.size() - i; j++){
+		for (std::int32_t i = 3; i < n; i++){
+			for (std::int32_t j = 0; j < n - i; j++){
 
 				float minArea = FLT_MAX;
 				std::int32_t KoPt = INT_MIN;
@@ -894,13 +1185,25 @@ void HE_MeshData::CalculateSigmas(std::vector<std::int32_t>& boundaryLoop, std::
 		sigmas[boundaryLoop[i]] = 0;
 		HE_Vertex* temp = HE_Vertexes[boundaryLoop[i]];
 		std::vector<HE_Vertex*> neighbors = GetVertexesFromVertex(HE_Vertexes[boundaryLoop[i]]);
+		if (neighbors.empty()) {
+			continue;
+		}
+		int validNeighbors = 0;
 
 		for (int j = 0; j < neighbors.size(); j++){
 			HE_Vertex* adj = neighbors[j];
+			if (adj == nullptr) {
+				continue;
+			}
 			sigmas[boundaryLoop[i]] += sqrt(pow(temp->Pos.x - adj->Pos.x, 2) + pow(temp->Pos.y - adj->Pos.y, 2) + pow(temp->Pos.z - adj->Pos.z, 2));
+			validNeighbors++;
 		}
 
-		sigmas[boundaryLoop[i]] /= neighbors.size();
+		if (validNeighbors == 0) {
+			sigmas[boundaryLoop[i]] = 0.0f;
+			continue;
+		}
+		sigmas[boundaryLoop[i]] /= validNeighbors;
 	}
 }
 
@@ -1270,6 +1573,9 @@ void HE_MeshData::Fairing(enum FMETHOD fairing) {
 	for (std::int32_t i = 0; i < HE_Vertexes.size(); i++) {
 		HE_Vertex* temp = HE_Vertexes[i];
 		std::vector<HE_Vertex*> neighbors = GetVertexesFromVertex(temp);
+		if (neighbors.empty()) {
+			continue;
+		}
 
 		float weightSum = 0.0f;
 		DirectX::XMFLOAT3 step = DirectX::XMFLOAT3(0.0f, 0.0f, 0.0f);
@@ -1277,6 +1583,9 @@ void HE_MeshData::Fairing(enum FMETHOD fairing) {
 		
 		for (int j = 0; j < neighbors.size(); j++) {
 			HE_Vertex* neighbor = neighbors[j];
+			if (neighbor == nullptr) {
+				continue;
+			}
 			float weight = 0.0f;
 
 			if (fairing != TAN && fairing != COT) {
@@ -1285,11 +1594,17 @@ void HE_MeshData::Fairing(enum FMETHOD fairing) {
 			else {
 				weight = GetWeightHarmonic(temp, neighbor, fairing);
 			}
+			if (weight != weight) {
+				continue;
+			}
 
 			weightSum += weight;
 			step.x += weight * neighbor->Pos.x;
 			step.y += weight * neighbor->Pos.y;
 			step.z += weight * neighbor->Pos.z;
+		}
+		if (weightSum > -1e-8f && weightSum < 1e-8f) {
+			continue;
 		}
 
 		move.x += step.x / weightSum;
@@ -1322,51 +1637,66 @@ float HE_MeshData::GetWeight(HE_Vertex* vertex, HE_Vertex* neighbor, enum FMETHO
 }
 
 float HE_MeshData::GetWeightHarmonic(HE_Vertex* vertex, HE_Vertex* neighbor, enum FMETHOD fairing) {
-	float a = 0.0f, b = 0.0f;
+	auto edgeIt = HE_Edges.find(std::make_pair(vertex->Index, neighbor->Index));
+	if (edgeIt == HE_Edges.end() || edgeIt->second == nullptr) {
+		return 0.0f;
+	}
 
-	HE_Edge* edge = HE_Edges.at(std::make_pair(vertex->Index, neighbor->Index));
+	float weightSum = 0.0f;
+	HE_Edge* baseEdge = edgeIt->second;
 
 	for (int i = 0; i < 2; i++) {
-		HE_Triangle* triangle = edge->Triangle;
-		std::vector<std::int32_t> indices;
+		HE_Edge* currentEdge = (i == 0) ? baseEdge : baseEdge->Pair;
+		if (currentEdge == nullptr || currentEdge->Triangle == nullptr) {
+			continue;
+		}
 
+		HE_Triangle* triangle = currentEdge->Triangle;
+		std::vector<std::int32_t> indices;
 		indices.push_back(triangle->VertexIndex0);
 		indices.push_back(triangle->VertexIndex1);
 		indices.push_back(triangle->VertexIndex2);
 
 		for (int j = 0; j < 3; j++) {
 			HE_Vertex* temp = HE_Vertexes[indices[j]];
-
-			if (temp != vertex && temp != neighbor) {
-
-				DirectX::XMFLOAT3 diff0 = DirectX::XMFLOAT3(temp->Pos.x - vertex->Pos.x, temp->Pos.y - vertex->Pos.y, temp->Pos.z - vertex->Pos.z);
-				DirectX::XMFLOAT3 diff1 = DirectX::XMFLOAT3(neighbor->Pos.x - vertex->Pos.x, neighbor->Pos.y - vertex->Pos.y, neighbor->Pos.z - vertex->Pos.z);
-				DirectX::XMFLOAT3 diff2 = DirectX::XMFLOAT3(neighbor->Pos.x - temp->Pos.x, neighbor->Pos.y - temp->Pos.y, neighbor->Pos.z - temp->Pos.z);
-				DirectX::XMFLOAT3 diff3 = DirectX::XMFLOAT3(vertex->Pos.x - temp->Pos.x, vertex->Pos.y - temp->Pos.y, vertex->Pos.z - temp->Pos.z);
-
-				if (fairing == TAN) {
-					if (i == 0) { a = tan(MathHelper::AngleBetweenVectors(diff0, diff1) / 2); }
-					else		{ b = tan(MathHelper::AngleBetweenVectors(diff0, diff1) / 2); }
-				}
-				else if (fairing == COT) {
-					if (i == 0) { a = 1 / tan(MathHelper::AngleBetweenVectors(diff3, diff2)); }
-					else		{ b = 1 / tan(MathHelper::AngleBetweenVectors(diff3, diff2)); }
-				}
-				break;
+			if (temp == nullptr || temp == vertex || temp == neighbor) {
+				continue;
 			}
+
+			DirectX::XMFLOAT3 diff0 = DirectX::XMFLOAT3(temp->Pos.x - vertex->Pos.x, temp->Pos.y - vertex->Pos.y, temp->Pos.z - vertex->Pos.z);
+			DirectX::XMFLOAT3 diff1 = DirectX::XMFLOAT3(neighbor->Pos.x - vertex->Pos.x, neighbor->Pos.y - vertex->Pos.y, neighbor->Pos.z - vertex->Pos.z);
+			DirectX::XMFLOAT3 diff2 = DirectX::XMFLOAT3(neighbor->Pos.x - temp->Pos.x, neighbor->Pos.y - temp->Pos.y, neighbor->Pos.z - temp->Pos.z);
+			DirectX::XMFLOAT3 diff3 = DirectX::XMFLOAT3(vertex->Pos.x - temp->Pos.x, vertex->Pos.y - temp->Pos.y, vertex->Pos.z - temp->Pos.z);
+
+			if (fairing == TAN) {
+				float contribution = tan(MathHelper::AngleBetweenVectors(diff0, diff1) / 2.0f);
+				if (contribution == contribution) {
+					weightSum += contribution;
+				}
+			}
+			else if (fairing == COT) {
+				float tanValue = tan(MathHelper::AngleBetweenVectors(diff3, diff2));
+				if (tanValue > FLT_EPSILON || tanValue < -FLT_EPSILON) {
+					float contribution = 1.0f / tanValue;
+					if (contribution == contribution) {
+						weightSum += contribution;
+					}
+				}
+			}
+			break;
 		}
-
-		edge = edge->Pair;
 	}
-
-	DirectX::XMFLOAT3 diff = DirectX::XMFLOAT3(vertex->Pos.x - neighbor->Pos.x, vertex->Pos.y - neighbor->Pos.y, vertex->Pos.z - neighbor->Pos.z);
-	float diff_len = sqrt(diff.x * diff.x + diff.y * diff.y + diff.z * diff.z);
 
 	if (fairing == COT) {
-		return (a + b);
+		return weightSum;
 	}
-	else if (fairing == TAN) {
-		return (a + b) / diff_len;
+	if (fairing == TAN) {
+		DirectX::XMFLOAT3 diff = DirectX::XMFLOAT3(vertex->Pos.x - neighbor->Pos.x, vertex->Pos.y - neighbor->Pos.y, vertex->Pos.z - neighbor->Pos.z);
+		float diff_len = sqrt(diff.x * diff.x + diff.y * diff.y + diff.z * diff.z);
+		if (diff_len <= FLT_EPSILON) {
+			return 0.0f;
+		}
+		return weightSum / diff_len;
 	}
 
 	return 0.0f;
@@ -1398,11 +1728,24 @@ void HE_MeshData::GetVertexesNormal() {
 void HE_MeshData::GetVertexNormal(HE_Vertex* vertex) {
 	std::vector<HE_Triangle*> triangles = GetTrianglesFromVertex(vertex);
 	DirectX::XMFLOAT3 normal = DirectX::XMFLOAT3(0.0f, 0.0f, 0.0f);
+	if (triangles.empty()) {
+		vertex->Normal = normal;
+		return;
+	}
+	int validTriangles = 0;
 
 	for (int i = 0; i < triangles.size(); i++){
+		if (triangles[i] == nullptr) {
+			continue;
+		}
 		normal.x += triangles[i]->Normal.x;
 		normal.y += triangles[i]->Normal.y;
 		normal.z += triangles[i]->Normal.z;
+		validTriangles++;
+	}
+	if (validTriangles == 0) {
+		vertex->Normal = DirectX::XMFLOAT3(0.0f, 0.0f, 0.0f);
+		return;
 	}
 
 	normal = MathHelper::Normalize(normal);

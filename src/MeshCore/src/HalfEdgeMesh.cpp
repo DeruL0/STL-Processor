@@ -181,14 +181,23 @@ std::vector<HE_Edge*> HE_MeshData::GetEdgesFromEdge(const HE_Edge* edge) {
 
 
 std::vector<HE_Triangle*> HE_MeshData::GetTrianglesFromTriangle(const HE_Triangle* triangle) {
+	std::vector<HE_Triangle*> facets;
+	if (triangle == nullptr || triangle->Edge == nullptr) {
+		return facets;
+	}
+
 	HE_Edge* edge = triangle->Edge;
 	HE_Edge* temp = edge;
-	std::vector<HE_Triangle*> facets;
 
 	do {
-		facets.push_back(temp->Pair->Triangle);
+		if (temp == nullptr || temp->Pair == nullptr) {
+			break;
+		}
+		if (temp->Pair->Triangle != nullptr) {
+			facets.push_back(temp->Pair->Triangle);
+		}
 		temp = temp->Next;
-	} while (temp != edge);
+	} while (temp != nullptr && temp != edge);
 
 	return facets;
 }

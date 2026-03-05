@@ -1,5 +1,6 @@
 #include "MeshRenderer.h"
 
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 
@@ -18,8 +19,21 @@ void UploadMeshBuffers(
         throw std::runtime_error("Mesh buffers are empty.");
     }
 
-    const UINT vbByteSize = static_cast<UINT>(buffers.Vertices.size() * sizeof(RenderVertex));
-    const UINT ibByteSize = static_cast<UINT>(buffers.Indices.size() * sizeof(std::int32_t));
+    const UINT64 vbByteSize64 = static_cast<UINT64>(buffers.Vertices.size()) * sizeof(RenderVertex);
+    const UINT64 ibByteSize64 = static_cast<UINT64>(buffers.Indices.size()) * sizeof(std::int32_t);
+    if (vbByteSize64 == 0 || ibByteSize64 == 0) {
+        throw std::runtime_error("Mesh buffer byte size is zero.");
+    }
+    if (vbByteSize64 > static_cast<UINT64>(std::numeric_limits<UINT>::max()) ||
+        ibByteSize64 > static_cast<UINT64>(std::numeric_limits<UINT>::max())) {
+        std::ostringstream oss;
+        oss << "Mesh too large for current buffer layout. vb=" << vbByteSize64
+            << " bytes, ib=" << ibByteSize64 << " bytes.";
+        throw std::runtime_error(oss.str());
+    }
+
+    const UINT vbByteSize = static_cast<UINT>(vbByteSize64);
+    const UINT ibByteSize = static_cast<UINT>(ibByteSize64);
 
     ThrowIfFailed(D3DCreateBlob(vbByteSize, &geometry.VertexBufferCPU));
     CopyMemory(geometry.VertexBufferCPU->GetBufferPointer(), buffers.Vertices.data(), vbByteSize);

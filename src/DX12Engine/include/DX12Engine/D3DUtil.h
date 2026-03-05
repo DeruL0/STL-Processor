@@ -216,6 +216,9 @@ struct Material{
 	//法线纹理在SRV堆的索引
 	int NormalSrvHeapIndex = -1;
 
+	//控制是否在像素着色器中采样漫反射纹理
+	bool UseTexture = true;
+
 	//已更新标志，表示本材质有变动，我们需要更新常量缓冲区
 	//由于每个FrameResource都有一个材质常量缓冲区，必须对每个FrameResource都进行更新
 	//因此修改材质时应该更新脏标志，使每个帧资源得到更新

@@ -2,6 +2,8 @@
 #include "MeshCore/Polycube.h"
 
 #include <filesystem>
+#include <iomanip>
+#include <sstream>
 #include <stdexcept>
 #include <utility>
 
@@ -12,6 +14,27 @@ using Microsoft::WRL::ComPtr;
 using namespace DirectX;
 
 const int gNumFrameResources = 3;
+
+namespace {
+std::string WideToUtf8(const std::wstring& text) {
+    if (text.empty()) {
+        return {};
+    }
+    const int size = WideCharToMultiByte(CP_UTF8, 0, text.c_str(), static_cast<int>(text.size()), nullptr, 0, nullptr, nullptr);
+    if (size <= 0) {
+        return {};
+    }
+    std::string result(size, '\0');
+    WideCharToMultiByte(CP_UTF8, 0, text.c_str(), static_cast<int>(text.size()), result.data(), size, nullptr, nullptr);
+    return result;
+}
+
+std::string HrToHex(HRESULT hr) {
+    std::ostringstream oss;
+    oss << "0x" << std::hex << std::uppercase << static_cast<unsigned int>(hr);
+    return oss.str();
+}
+}
 
 const char* STLApp::WorkerTaskName(WorkerTaskKind kind) {
     switch (kind) {
@@ -373,6 +396,7 @@ void STLApp::UpdateMaterialBuffer(const GameTimer& gt) {
             matData.Roughness = mat->Roughness;
             XMStoreFloat4x4(&matData.MatTransform, XMMatrixTranspose(matTransform));
             matData.DiffuseMapIndex = mat->DiffuseSrvHeapIndex;
+            matData.UseDiffuseTexture = mat->UseTexture ? 1u : 0u;
 
             currMaterialBuffer->CopyData(mat->MatCBIndex, matData);
 
@@ -395,6 +419,9 @@ void STLApp::LoadTextures(){
             defaultDiffuseTex->Resource,
             defaultDiffuseTex->UploadHeap)
         );
+    }
+    else {
+        OutputDebugStringA("defaultDiffuseTex not found, using material color only.\n");
     }
 
     textures[defaultDiffuseTex->Name] = std::move(defaultDiffuseTex);
@@ -468,7 +495,7 @@ void STLApp::BuildDescriptorHeaps() {
 
     D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
     srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-    srvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    srvDesc.Format = defaultDiffuseTex ? defaultDiffuseTex->GetDesc().Format : DXGI_FORMAT_R8G8B8A8_UNORM;
     srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
     srvDesc.Texture2D.MostDetailedMip = 0;
     srvDesc.Texture2D.MipLevels = defaultDiffuseTex ? defaultDiffuseTex->GetDesc().MipLevels : 1;
@@ -705,6 +732,7 @@ void STLApp::BuildMaterials() {
     wireMat->DiffuseAlbedo = XMFLOAT4(Colors::Gray);
     wireMat->FresnelR0 = XMFLOAT3(0.02f, 0.02f, 0.02f);
     wireMat->Roughness = 0.1f;
+    wireMat->UseTexture = false;
 
     auto skullMat = std::make_unique<Material>();
     skullMat->Name = "skullMat";
@@ -713,6 +741,7 @@ void STLApp::BuildMaterials() {
     skullMat->DiffuseAlbedo = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
     skullMat->FresnelR0 = XMFLOAT3(0.05f, 0.05f, 0.05);
     skullMat->Roughness = 0.0f;
+    skullMat->UseTexture = false;
 
     materials["wireMat"] = std::move(wireMat);
     materials["skullMat"] = std::move(skullMat);
@@ -819,6 +848,7 @@ void STLApp::WorkerLoop() {
                     ToMeshFairing(task.RepairState.HoleFairing),
                     task.RepairState.HoleFairingIterations
                 );
+                workerMesh.RepairNormal();
                 workerMesh.GetVertexesNormal();
                 result.Message = "HolesFilling completed.";
             } else if (task.Kind == WorkerTaskKind::Denoise) {
@@ -1010,6 +1040,17 @@ void STLApp::ApplyPendingGpuBuffers() {
             dx12Device.Get(),
             commandList.Get()
         );
+    } catch (const DxException& e) {
+        HRESULT removedReason = S_OK;
+        if (dx12Device != nullptr) {
+            removedReason = dx12Device->GetDeviceRemovedReason();
+        }
+        meshInfoState.Status = std::string("GPU update failed: ") + WideToUtf8(e.ToString());
+        if (FAILED(removedReason)) {
+            meshInfoState.Status += " RemovedReason=" + HrToHex(removedReason);
+        }
+        pendingGpuBuffers.reset();
+        return;
     } catch (const std::exception& e) {
         meshInfoState.Status = std::string("GPU update failed: ") + e.what();
         pendingGpuBuffers.reset();
