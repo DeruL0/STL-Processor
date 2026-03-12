@@ -8,6 +8,8 @@ target_include_directories(d3dx12 INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/d3dx12
 )
 
+add_subdirectory(tetgen)
+
 set(IMGUI_VERSION_FILE ${CMAKE_CURRENT_SOURCE_DIR}/imgui/VERSION.txt)
 if(EXISTS ${IMGUI_VERSION_FILE})
     file(READ ${IMGUI_VERSION_FILE} IMGUI_VERSION_RAW)

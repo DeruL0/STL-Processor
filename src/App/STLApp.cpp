@@ -1,12 +1,15 @@
 ﻿#include "STLApp.h"
 #include "MeshCore/Polycube.h"
 
+#include <commdlg.h>
+#include <cctype>
 #include <filesystem>
 #include <iomanip>
 #include <sstream>
 #include <stdexcept>
 #include <utility>
 
+#pragma comment(lib, "Comdlg32.lib")
 #pragma comment(lib, "d3dcompiler.lib")
 #pragma comment(lib, "D3D12.lib")
 
@@ -33,6 +36,17 @@ std::string HrToHex(HRESULT hr) {
     std::ostringstream oss;
     oss << "0x" << std::hex << std::uppercase << static_cast<unsigned int>(hr);
     return oss.str();
+}
+
+std::string EnsureTrailingSeparator(std::string directory) {
+    if (!directory.empty() && directory.back() != '\\' && directory.back() != '/') {
+        directory.push_back(std::filesystem::path::preferred_separator);
+    }
+    return directory;
+}
+
+std::string BuildModelPath(const std::string& directory, const std::string& fileStem) {
+    return EnsureTrailingSeparator(directory) + fileStem + ".stl";
 }
 }
 
@@ -64,6 +78,26 @@ FMETHOD STLApp::ToMeshFairing(GUI::FairingOption option) {
     case GUI::FairingOption::Tan: return TAN;
     case GUI::FairingOption::Cot: return COT;
     default: return NO_FAIRING;
+    }
+}
+
+const char* STLApp::ToPolycubeStageLabel(PolycubeStage stage) {
+    switch (stage) {
+    case PolycubeStage::Preprocess: return "Preprocess";
+    case PolycubeStage::Tetrahedralize: return "Tetrahedralize";
+    case PolycubeStage::Optimize: return "Optimize";
+    case PolycubeStage::Cleanup: return "Cleanup";
+    case PolycubeStage::Completed: return "Completed";
+    default: return "None";
+    }
+}
+
+const char* STLApp::ToPolycubePreviewSourceLabel(PolycubePreviewSource previewSource) {
+    switch (previewSource) {
+    case PolycubePreviewSource::TetrahedralBoundary: return "Tet Boundary";
+    case PolycubePreviewSource::AcceptedOptimizationStep: return "Accepted Optimization Step";
+    case PolycubePreviewSource::CleanupResult: return "Cleanup Result";
+    default: return "None";
     }
 }
 
@@ -144,6 +178,7 @@ void STLApp::OnResize() {
 
 void STLApp::Update(const GameTimer& gt) {
     PumpWorkerResults();
+    HandlePendingModelDialog();
     OnKeyboardInput(gt);
 
     //循环获取帧资源循环数组内容
@@ -212,7 +247,7 @@ void STLApp::Draw(const GameTimer& gt) {
 
     imguiLayer.BeginFrame();
     GUI::PanelActions panelActions;
-    panels.Draw(meshInfoState, repairPanelState, polycubePanelState, polycubeStatus, panelActions);
+    panels.Draw(meshInfoState, repairPanelState, polycubePanelState, polycubeInfoState, panelActions);
     ProcessPanelActions(panelActions);
     imguiLayer.Render(commandList.Get());
 
@@ -650,9 +685,11 @@ void STLApp::BuildSkullGeometry() {
     displayMeshData.GetVertexesNormal();
     UpdateMeshInfo(displayMeshData);
 
+    currentModelPath = BuildModelPath(modelDirectory, sourceModelName);
+    meshInfoState.ModelPath = currentModelPath;
     meshInfoState.Status = "Loaded source mesh.";
     meshInfoState.ActiveTask = "None";
-    polycubeStatus = "Idle";
+    polycubeInfoState = {};
 
     const MeshRendererBuffers meshBuffers = MeshRenderer::BuildFromHalfEdge(displayMeshData);
     geometries["skullGeo"] = MeshRenderer::CreateMeshGeometry(
@@ -797,12 +834,11 @@ void STLApp::StopWorkerThread() {
 }
 
 void STLApp::WorkerLoop() {
-    const std::string workerModelDirectory = modelDirectory;
-    const std::string workerSourceModelName = sourceModelName;
-
     HE_MeshData workerMesh;
     bool meshLoaded = false;
     Polycube polycube;
+    std::string workerModelDirectory;
+    std::string workerSourceModelName;
 
     while (true) {
         WorkerTask task;
@@ -816,11 +852,27 @@ void STLApp::WorkerLoop() {
             task = *pendingWorkerTask;
             pendingWorkerTask.reset();
             workerBusy = true;
+            workerRunningTask = task.Kind;
+            workerRunningSequence = task.Sequence;
+            workerProgressState = WorkerProgress{
+                task.Kind,
+                task.Sequence,
+                task.Kind == WorkerTaskKind::Polycube ? PolycubeStage::Preprocess : PolycubeStage::None,
+                PolycubePreviewSource::None,
+                "Running.",
+                {}
+            };
         }
 
         WorkerResult result;
         result.Kind = task.Kind;
         result.Sequence = task.Sequence;
+
+        if (workerModelDirectory != task.ModelDirectory || workerSourceModelName != task.SourceModelName) {
+            workerModelDirectory = task.ModelDirectory;
+            workerSourceModelName = task.SourceModelName;
+            meshLoaded = false;
+        }
 
         auto ensureLoaded = [&]() {
             if (!meshLoaded) {
@@ -884,25 +936,60 @@ void STLApp::WorkerLoop() {
                 ensureLoaded();
 
                 PolycubeOptions options;
-                options.IterationBudget = task.PolycubeState.IterationBudget;
-                options.AlignmentWeight = task.PolycubeState.AlignmentWeight;
-                options.PreserveSharpFeatures = task.PolycubeState.PreserveSharpFeatures;
+                options.TetSpacingScale = task.PolycubeState.TetSpacingScale;
+                options.InitialAlpha = task.PolycubeState.InitialAlpha;
+                options.ComplexityWeight = task.PolycubeState.ComplexityWeight;
+                options.AlphaMultiplier = task.PolycubeState.AlphaMultiplier;
+                options.InitialEpsilon = task.PolycubeState.InitialEpsilon;
+                options.EpsilonDecay = task.PolycubeState.EpsilonDecay;
+                options.MinEpsilon = task.PolycubeState.MinEpsilon;
+                options.TargetNormalizedError = task.PolycubeState.TargetNormalizedError;
+                options.MaxOuterStages = task.PolycubeState.MaxOuterStages;
+                options.MaxInnerIterations = task.PolycubeState.MaxInnerIterations;
+                options.ProgressCallback = [this, sequence = task.Sequence](const PolycubeProgress& progress) {
+                    std::lock_guard<std::mutex> lock(workerMutex);
+                    if (!workerBusy || workerRunningTask != WorkerTaskKind::Polycube || workerRunningSequence != sequence) {
+                        return;
+                    }
+                    workerProgressState = WorkerProgress{
+                        WorkerTaskKind::Polycube,
+                        sequence,
+                        progress.StageReached,
+                        progress.PreviewSource,
+                        progress.Status,
+                        progress.Stats
+                    };
+                };
 
-                const PolycubeResult polycubeResult = polycube.Generate(workerMesh, options);
+                PolycubeResult polycubeResult = polycube.Generate(workerMesh, options);
+                result.StageReached = polycubeResult.StageReached;
+                result.PreviewSource = polycubeResult.PreviewSource;
+                result.Summary = polycubeResult.Summary;
+                result.Stats = polycubeResult.Stats;
                 if (!polycubeResult.Ok) {
                     result.Succeeded = false;
                     result.Message = polycubeResult.Error.empty() ? "Polycube failed." : polycubeResult.Error;
+                    result.HasUpdatedMesh = polycubeResult.PreviewApplied;
                 } else {
-                    workerMesh.GetVertexesNormal();
-                    result.Message = "Polycube completed.";
+                    result.Succeeded = true;
+                    result.Message = polycubeResult.Summary.empty() ? "Polycube completed." : polycubeResult.Summary;
+                    result.Succeeded = true;
+                    result.HasUpdatedMesh = true;
+                }
+
+                if (polycubeResult.Ok || polycubeResult.PreviewApplied) {
+                    workerMesh = std::move(polycubeResult.BoundaryPreviewMesh);
                 }
             }
 
-            if (result.Kind != WorkerTaskKind::Polycube || result.Succeeded) {
+            if (result.Kind != WorkerTaskKind::Polycube || result.Succeeded || result.HasUpdatedMesh) {
                 result.Buffers = MeshRenderer::BuildFromHalfEdge(workerMesh);
                 result.VertexCount = static_cast<std::uint32_t>(workerMesh.HE_Vertexes.size());
                 result.TriangleCount = static_cast<std::uint32_t>(workerMesh.HE_Triangles.size());
-                result.Succeeded = true;
+                result.HasUpdatedMesh = true;
+                if (result.Kind != WorkerTaskKind::Polycube || result.Succeeded) {
+                    result.Succeeded = true;
+                }
             }
         } catch (const std::exception& e) {
             result.Succeeded = false;
@@ -912,6 +999,9 @@ void STLApp::WorkerLoop() {
         {
             std::lock_guard<std::mutex> lock(workerMutex);
             workerBusy = false;
+            workerRunningTask = WorkerTaskKind::None;
+            workerRunningSequence = 0;
+            workerProgressState.reset();
             completedWorkerResult = std::move(result);
         }
     }
@@ -922,6 +1012,8 @@ void STLApp::QueueWorkerTask(WorkerTaskKind kind) {
     task.Kind = kind;
     task.RepairState = repairPanelState;
     task.PolycubeState = polycubePanelState;
+    task.ModelDirectory = modelDirectory;
+    task.SourceModelName = sourceModelName;
 
     bool hasRunningTask = false;
     {
@@ -937,15 +1029,19 @@ void STLApp::QueueWorkerTask(WorkerTaskKind kind) {
     meshInfoState.ActiveTask = WorkerTaskName(kind);
     meshInfoState.Status = hasRunningTask ? "Queued (latest request kept)." : "Queued.";
     if (kind == WorkerTaskKind::Polycube) {
-        polycubeStatus = "Queued";
+        polycubeInfoState = {};
+        polycubeInfoState.Status = "Queued";
+        polycubeInfoState.Stage = "Queued";
     }
 }
 
 void STLApp::PumpWorkerResults() {
     std::optional<WorkerResult> result;
+    std::optional<WorkerProgress> progress;
     bool hasPendingTask = false;
     bool isBusy = false;
     WorkerTaskKind pendingKind = WorkerTaskKind::None;
+    WorkerTaskKind runningKind = WorkerTaskKind::None;
 
     {
         std::lock_guard<std::mutex> lock(workerMutex);
@@ -953,7 +1049,11 @@ void STLApp::PumpWorkerResults() {
         if (hasPendingTask) {
             pendingKind = pendingWorkerTask->Kind;
         }
+        runningKind = workerRunningTask;
         isBusy = workerBusy || hasPendingTask;
+        if (workerProgressState.has_value()) {
+            progress = workerProgressState;
+        }
         if (completedWorkerResult.has_value()) {
             result = std::move(completedWorkerResult);
             completedWorkerResult.reset();
@@ -961,34 +1061,93 @@ void STLApp::PumpWorkerResults() {
     }
 
     meshInfoState.Busy = isBusy;
-    if (isBusy && hasPendingTask) {
+    if (runningKind != WorkerTaskKind::None) {
+        meshInfoState.ActiveTask = WorkerTaskName(runningKind);
+    } else if (isBusy && hasPendingTask) {
         meshInfoState.ActiveTask = WorkerTaskName(pendingKind);
     } else if (!isBusy) {
         meshInfoState.ActiveTask = "None";
+    }
+
+    if (!result.has_value() && progress.has_value()) {
+        meshInfoState.Status = progress->Message;
+        if (progress->Kind == WorkerTaskKind::Polycube) {
+            polycubeInfoState.Status = progress->Message;
+            polycubeInfoState.Stage = ToPolycubeStageLabel(progress->StageReached);
+            polycubeInfoState.PreviewSource = ToPolycubePreviewSourceLabel(progress->PreviewSource);
+            polycubeInfoState.TetCount = progress->Stats.TetCount;
+            polycubeInfoState.BoundaryFaceCount = progress->Stats.BoundaryFaceCount;
+            polycubeInfoState.OuterStages = progress->Stats.OuterStages;
+            polycubeInfoState.InnerIterations = progress->Stats.InnerIterations;
+            polycubeInfoState.InitialPatchCount = progress->Stats.InitialPatchCount;
+            polycubeInfoState.FinalPatchCount = progress->Stats.FinalPatchCount;
+            polycubeInfoState.NormalizedError = progress->Stats.NormalizedError;
+            polycubeInfoState.AreaDrift = progress->Stats.AreaDrift;
+            polycubeInfoState.MinTetVolume = progress->Stats.MinTetVolume;
+        }
     }
 
     if (!result.has_value()) {
         return;
     }
 
-    if (result->Succeeded) {
+    if (result->HasUpdatedMesh) {
         pendingGpuBuffers = std::move(result->Buffers);
         meshInfoState.VertexCount = static_cast<int>(result->VertexCount);
         meshInfoState.TriangleCount = static_cast<int>(result->TriangleCount);
+    }
+
+    if (result->Succeeded) {
         meshInfoState.Status = result->Message;
 
+        if (result->Kind == WorkerTaskKind::Reset) {
+            polycubeInfoState = {};
+        }
+
         if (result->Kind == WorkerTaskKind::Polycube) {
-            polycubeStatus = "Success";
+            polycubeInfoState.Status = "Success";
+            polycubeInfoState.Summary = result->Summary;
+            polycubeInfoState.Stage = ToPolycubeStageLabel(result->StageReached);
+            polycubeInfoState.PreviewSource = ToPolycubePreviewSourceLabel(result->PreviewSource);
+            polycubeInfoState.TetCount = result->Stats.TetCount;
+            polycubeInfoState.BoundaryFaceCount = result->Stats.BoundaryFaceCount;
+            polycubeInfoState.OuterStages = result->Stats.OuterStages;
+            polycubeInfoState.InnerIterations = result->Stats.InnerIterations;
+            polycubeInfoState.InitialPatchCount = result->Stats.InitialPatchCount;
+            polycubeInfoState.FinalPatchCount = result->Stats.FinalPatchCount;
+            polycubeInfoState.NormalizedError = result->Stats.NormalizedError;
+            polycubeInfoState.AreaDrift = result->Stats.AreaDrift;
+            polycubeInfoState.MinTetVolume = result->Stats.MinTetVolume;
         }
     } else {
         meshInfoState.Status = "Failed: " + result->Message;
         if (result->Kind == WorkerTaskKind::Polycube) {
-            polycubeStatus = "Failed: " + result->Message;
+            polycubeInfoState.Summary = result->Summary;
+            polycubeInfoState.Stage = ToPolycubeStageLabel(result->StageReached);
+            polycubeInfoState.PreviewSource = ToPolycubePreviewSourceLabel(result->PreviewSource);
+            polycubeInfoState.TetCount = result->Stats.TetCount;
+            polycubeInfoState.BoundaryFaceCount = result->Stats.BoundaryFaceCount;
+            polycubeInfoState.OuterStages = result->Stats.OuterStages;
+            polycubeInfoState.InnerIterations = result->Stats.InnerIterations;
+            polycubeInfoState.InitialPatchCount = result->Stats.InitialPatchCount;
+            polycubeInfoState.FinalPatchCount = result->Stats.FinalPatchCount;
+            polycubeInfoState.NormalizedError = result->Stats.NormalizedError;
+            polycubeInfoState.AreaDrift = result->Stats.AreaDrift;
+            polycubeInfoState.MinTetVolume = result->Stats.MinTetVolume;
+            polycubeInfoState.Status = "Failed: " + result->Message;
         }
     }
 }
 
 void STLApp::ProcessPanelActions(const GUI::PanelActions& actions) {
+    if (actions.RequestOpenModel) {
+        if (meshInfoState.Busy) {
+            meshInfoState.Status = "Wait for the current background task to finish before loading another model.";
+            return;
+        }
+        openModelDialogRequested = true;
+        return;
+    }
     if (actions.RequestReset) {
         QueueWorkerTask(WorkerTaskKind::Reset);
         return;
@@ -1017,6 +1176,66 @@ void STLApp::ProcessPanelActions(const GUI::PanelActions& actions) {
         QueueWorkerTask(WorkerTaskKind::Polycube);
         return;
     }
+}
+
+void STLApp::HandlePendingModelDialog() {
+    if (!openModelDialogRequested) {
+        return;
+    }
+
+    openModelDialogRequested = false;
+
+    std::array<char, 4096> fileBuffer = {};
+    std::filesystem::path initialDirectory = std::filesystem::path(currentModelPath).parent_path();
+    const std::string initialDirectoryString = initialDirectory.empty() ? std::string() : initialDirectory.string();
+
+    OPENFILENAMEA dialog = {};
+    dialog.lStructSize = sizeof(dialog);
+    dialog.hwndOwner = hMainWnd;
+    dialog.lpstrFilter = "STL Files (*.stl)\0*.stl\0All Files (*.*)\0*.*\0";
+    dialog.lpstrFile = fileBuffer.data();
+    dialog.nMaxFile = static_cast<DWORD>(fileBuffer.size());
+    dialog.lpstrInitialDir = initialDirectoryString.empty() ? nullptr : initialDirectoryString.c_str();
+    dialog.lpstrDefExt = "stl";
+    dialog.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY;
+
+    if (!GetOpenFileNameA(&dialog)) {
+        const DWORD error = CommDlgExtendedError();
+        if (error != 0) {
+            meshInfoState.Status = "Open model dialog failed: " + std::to_string(error);
+        }
+        return;
+    }
+
+    QueueModelLoadFromPath(std::filesystem::path(fileBuffer.data()));
+}
+
+void STLApp::QueueModelLoadFromPath(const std::filesystem::path& modelPath) {
+    if (modelPath.empty()) {
+        meshInfoState.Status = "No model selected.";
+        return;
+    }
+    if (!std::filesystem::exists(modelPath)) {
+        meshInfoState.Status = "Selected model does not exist.";
+        return;
+    }
+
+    std::string extension = modelPath.extension().string();
+    std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    if (extension != ".stl") {
+        meshInfoState.Status = "Only .stl files are supported.";
+        return;
+    }
+
+    modelDirectory = EnsureTrailingSeparator(modelPath.parent_path().string());
+    sourceModelName = modelPath.stem().string();
+    currentModelPath = modelPath.lexically_normal().string();
+    meshInfoState.ModelPath = currentModelPath;
+    polycubeInfoState = {};
+
+    QueueWorkerTask(WorkerTaskKind::Reset);
 }
 
 void STLApp::ApplyPendingGpuBuffers() {

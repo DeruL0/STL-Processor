@@ -27,6 +27,7 @@ struct MeshInfoState {
     bool Busy = false;
     std::string ActiveTask = "None";
     std::string Status = "Idle";
+    std::string ModelPath = "assets/Models/Bunny.stl";
 };
 
 struct RepairPanelState {
@@ -43,12 +44,36 @@ struct RepairPanelState {
 };
 
 struct PolycubePanelState {
-    int IterationBudget = 20;
-    float AlignmentWeight = 0.5f;
-    bool PreserveSharpFeatures = true;
+    float TetSpacingScale = 1.0f;
+    float InitialAlpha = 0.1f;
+    float ComplexityWeight = 0.0f;
+    float AlphaMultiplier = 2.0f;
+    float InitialEpsilon = 1.0f;
+    float EpsilonDecay = 0.5f;
+    float MinEpsilon = 0.01f;
+    float TargetNormalizedError = 1e-3f;
+    int MaxOuterStages = 20;
+    int MaxInnerIterations = 25;
+};
+
+struct PolycubeInfoState {
+    std::string Status = "Idle";
+    std::string Summary;
+    std::string Stage = "None";
+    std::string PreviewSource = "None";
+    int TetCount = 0;
+    int BoundaryFaceCount = 0;
+    int OuterStages = 0;
+    int InnerIterations = 0;
+    int InitialPatchCount = 0;
+    int FinalPatchCount = 0;
+    float NormalizedError = 0.0f;
+    float AreaDrift = 0.0f;
+    float MinTetVolume = 0.0f;
 };
 
 struct PanelActions {
+    bool RequestOpenModel = false;
     bool RequestRepairNormal = false;
     bool RequestHolesFilling = false;
     bool RequestDenoise = false;
@@ -64,13 +89,13 @@ public:
         const MeshInfoState& meshInfo,
         RepairPanelState& repairState,
         PolycubePanelState& polycubeState,
-        const std::string& polycubeStatus,
+        const PolycubeInfoState& polycubeInfo,
         PanelActions& outActions
     ) const;
 
 private:
-    void DrawMeshInfo(const MeshInfoState& meshInfo) const;
+    void DrawMeshInfo(const MeshInfoState& meshInfo, PanelActions& outActions) const;
     void DrawRepairPanel(const MeshInfoState& meshInfo, RepairPanelState& repairState, PanelActions& outActions) const;
-    void DrawPolycubePanel(const MeshInfoState& meshInfo, PolycubePanelState& polycubeState, const std::string& polycubeStatus, PanelActions& outActions) const;
+    void DrawPolycubePanel(const MeshInfoState& meshInfo, PolycubePanelState& polycubeState, const PolycubeInfoState& polycubeInfo, PanelActions& outActions) const;
 };
 } // namespace GUI

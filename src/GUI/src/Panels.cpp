@@ -15,20 +15,25 @@ void Panels::Draw(
     const MeshInfoState& meshInfo,
     RepairPanelState& repairState,
     PolycubePanelState& polycubeState,
-    const std::string& polycubeStatus,
+    const PolycubeInfoState& polycubeInfo,
     PanelActions& outActions
 ) const {
-    DrawMeshInfo(meshInfo);
+    DrawMeshInfo(meshInfo, outActions);
     DrawRepairPanel(meshInfo, repairState, outActions);
-    DrawPolycubePanel(meshInfo, polycubeState, polycubeStatus, outActions);
+    DrawPolycubePanel(meshInfo, polycubeState, polycubeInfo, outActions);
 }
 
-void Panels::DrawMeshInfo(const MeshInfoState& meshInfo) const {
+void Panels::DrawMeshInfo(const MeshInfoState& meshInfo, PanelActions& outActions) const {
     if (!ImGui::Begin("Mesh Info")) {
         ImGui::End();
         return;
     }
 
+    if (ImGui::Button("Open STL...")) {
+        outActions.RequestOpenModel = true;
+    }
+    ImGui::TextWrapped("Model: %s", meshInfo.ModelPath.c_str());
+    ImGui::Separator();
     ImGui::Text("Vertices: %d", meshInfo.VertexCount);
     ImGui::Text("Triangles: %d", meshInfo.TriangleCount);
     ImGui::Separator();
@@ -100,7 +105,7 @@ void Panels::DrawRepairPanel(const MeshInfoState& meshInfo, RepairPanelState& re
 void Panels::DrawPolycubePanel(
     const MeshInfoState& meshInfo,
     PolycubePanelState& polycubeState,
-    const std::string& polycubeStatus,
+    const PolycubeInfoState& polycubeInfo,
     PanelActions& outActions
 ) const {
     if (!ImGui::Begin("Polycube")) {
@@ -108,13 +113,46 @@ void Panels::DrawPolycubePanel(
         return;
     }
 
-    ImGui::InputInt("Iteration Budget", &polycubeState.IterationBudget);
-    polycubeState.IterationBudget = std::max(1, polycubeState.IterationBudget);
-    ImGui::SliderFloat("Alignment Weight", &polycubeState.AlignmentWeight, 0.0f, 1.0f, "%.3f");
-    ImGui::Checkbox("Preserve Sharp Features", &polycubeState.PreserveSharpFeatures);
+    ImGui::SliderFloat("Tet Spacing Scale", &polycubeState.TetSpacingScale, 0.5f, 3.0f, "%.2f");
+    ImGui::InputFloat("Initial Alpha", &polycubeState.InitialAlpha, 0.05f, 0.1f, "%.3f");
+    polycubeState.InitialAlpha = std::max(0.001f, polycubeState.InitialAlpha);
+    ImGui::InputFloat("Complexity Weight", &polycubeState.ComplexityWeight, 0.1f, 1.0f, "%.3f");
+    polycubeState.ComplexityWeight = std::max(0.0f, polycubeState.ComplexityWeight);
+    ImGui::InputFloat("Alpha Multiplier", &polycubeState.AlphaMultiplier, 0.1f, 0.5f, "%.3f");
+    polycubeState.AlphaMultiplier = std::max(1.0f, polycubeState.AlphaMultiplier);
+
+    ImGui::InputFloat("Initial Epsilon", &polycubeState.InitialEpsilon, 0.1f, 0.5f, "%.3f");
+    polycubeState.InitialEpsilon = std::max(0.001f, polycubeState.InitialEpsilon);
+    ImGui::InputFloat("Epsilon Decay", &polycubeState.EpsilonDecay, 0.05f, 0.1f, "%.3f");
+    polycubeState.EpsilonDecay = std::clamp(polycubeState.EpsilonDecay, 0.1f, 1.0f);
+    ImGui::InputFloat("Min Epsilon", &polycubeState.MinEpsilon, 0.005f, 0.01f, "%.3f");
+    polycubeState.MinEpsilon = std::clamp(polycubeState.MinEpsilon, 0.0001f, polycubeState.InitialEpsilon);
+
+    ImGui::InputFloat("Target Error", &polycubeState.TargetNormalizedError, 0.0001f, 0.001f, "%.4f");
+    polycubeState.TargetNormalizedError = std::max(1e-5f, polycubeState.TargetNormalizedError);
+    ImGui::InputInt("Max Outer Stages", &polycubeState.MaxOuterStages);
+    polycubeState.MaxOuterStages = std::max(1, polycubeState.MaxOuterStages);
+    ImGui::InputInt("Max Inner Iterations", &polycubeState.MaxInnerIterations);
+    polycubeState.MaxInnerIterations = std::max(1, polycubeState.MaxInnerIterations);
+
+    ImGui::TextUnformatted("Volumetric L1 PolyCube with vendored TetGen tetrahedralization.");
+    ImGui::TextUnformatted("Solver: Eigen sparse LDLT + Eigen SVD/eigensolver.");
 
     ImGui::Separator();
-    ImGui::TextWrapped("Status: %s", polycubeStatus.c_str());
+    ImGui::TextWrapped("Status: %s", polycubeInfo.Status.c_str());
+    if (!polycubeInfo.Summary.empty()) {
+        ImGui::TextWrapped("Summary: %s", polycubeInfo.Summary.c_str());
+    }
+    ImGui::Text("Stage: %s", polycubeInfo.Stage.c_str());
+    ImGui::Text("Preview: %s", polycubeInfo.PreviewSource.c_str());
+    ImGui::Text("Tets: %d", polycubeInfo.TetCount);
+    ImGui::Text("Boundary Faces: %d", polycubeInfo.BoundaryFaceCount);
+    ImGui::Text("Outer Stages: %d", polycubeInfo.OuterStages);
+    ImGui::Text("Inner Iterations: %d", polycubeInfo.InnerIterations);
+    ImGui::Text("Patches: %d -> %d", polycubeInfo.InitialPatchCount, polycubeInfo.FinalPatchCount);
+    ImGui::Text("Normalized Error: %.6f", polycubeInfo.NormalizedError);
+    ImGui::Text("Area Drift: %.6f", polycubeInfo.AreaDrift);
+    ImGui::Text("Min Tet Volume: %.6f", polycubeInfo.MinTetVolume);
     if (meshInfo.Busy) {
         ImGui::TextUnformatted("Running. New request will replace queued request.");
     }

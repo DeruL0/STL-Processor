@@ -8,10 +8,12 @@
 #include "GUI/Panels.h"
 #include "MeshRenderer.h"
 #include "MeshCore/HalfEdgeMesh.h"
+#include "MeshCore/Polycube.h"
 
 #include <array>
 #include <condition_variable>
 #include <cstdint>
+#include <filesystem>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -63,6 +65,8 @@ private:
         WorkerTaskKind Kind = WorkerTaskKind::None;
         GUI::RepairPanelState RepairState;
         GUI::PolycubePanelState PolycubeState;
+        std::string ModelDirectory;
+        std::string SourceModelName;
         std::uint64_t Sequence = 0;
     };
 
@@ -70,31 +74,50 @@ private:
         WorkerTaskKind Kind = WorkerTaskKind::None;
         std::uint64_t Sequence = 0;
         bool Succeeded = false;
+        bool HasUpdatedMesh = false;
+        PolycubeStage StageReached = PolycubeStage::None;
+        PolycubePreviewSource PreviewSource = PolycubePreviewSource::None;
         std::string Message;
+        std::string Summary;
+        PolycubeStats Stats;
         MeshRendererBuffers Buffers;
         std::uint32_t VertexCount = 0;
         std::uint32_t TriangleCount = 0;
     };
 
+    struct WorkerProgress {
+        WorkerTaskKind Kind = WorkerTaskKind::None;
+        std::uint64_t Sequence = 0;
+        PolycubeStage StageReached = PolycubeStage::None;
+        PolycubePreviewSource PreviewSource = PolycubePreviewSource::None;
+        std::string Message;
+        PolycubeStats Stats;
+    };
+
     HE_MeshData displayMeshData;
     std::string modelDirectory = "assets/Models/";
-    std::string sourceModelName = "bunnyhole";
+    std::string sourceModelName = "Bunny";
+    std::string currentModelPath = "assets/Models/Bunny.stl";
 
     GUI::ImGuiLayer imguiLayer;
     GUI::Panels panels;
     GUI::MeshInfoState meshInfoState;
     GUI::RepairPanelState repairPanelState;
     GUI::PolycubePanelState polycubePanelState;
-    std::string polycubeStatus = "Idle";
+    GUI::PolycubeInfoState polycubeInfoState;
 
     std::thread workerThread;
     std::mutex workerMutex;
     std::condition_variable workerCv;
     bool workerStop = false;
     bool workerBusy = false;
+    WorkerTaskKind workerRunningTask = WorkerTaskKind::None;
+    std::uint64_t workerRunningSequence = 0;
+    bool openModelDialogRequested = false;
     std::uint64_t taskSequence = 0;
     std::optional<WorkerTask> pendingWorkerTask;
     std::optional<WorkerResult> completedWorkerResult;
+    std::optional<WorkerProgress> workerProgressState;
     std::optional<MeshRendererBuffers> pendingGpuBuffers;
 
     std::vector<std::unique_ptr<FrameResource>> frameResources;
@@ -163,6 +186,8 @@ private:
     void QueueWorkerTask(WorkerTaskKind kind);
     void PumpWorkerResults();
     void ProcessPanelActions(const GUI::PanelActions& actions);
+    void HandlePendingModelDialog();
+    void QueueModelLoadFromPath(const std::filesystem::path& modelPath);
     void ApplyPendingGpuBuffers();
     void UpdateRenderItemsForSkull();
     void UpdateMeshInfo(const HE_MeshData& meshData);
@@ -171,6 +196,8 @@ private:
     static METHOD ToMeshMethod(GUI::HoleMethodOption option);
     static RMETHOD ToMeshRefinement(GUI::RefinementOption option);
     static FMETHOD ToMeshFairing(GUI::FairingOption option);
+    static const char* ToPolycubeStageLabel(PolycubeStage stage);
+    static const char* ToPolycubePreviewSourceLabel(PolycubePreviewSource previewSource);
 
     std::array<const CD3DX12_STATIC_SAMPLER_DESC, 6> GetStaticSamplers();
 };

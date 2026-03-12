@@ -127,6 +127,10 @@ struct HE_Triangle : Triangle {
 class HE_MeshData {
 public:
     HE_MeshData() = default;
+    HE_MeshData(const HE_MeshData&) = delete;
+    HE_MeshData& operator=(const HE_MeshData&) = delete;
+    HE_MeshData(HE_MeshData&& other) noexcept;
+    HE_MeshData& operator=(HE_MeshData&& other) noexcept;
     ~HE_MeshData();
 
     std::vector<HE_Vertex*> HE_Vertexes;
@@ -138,6 +142,11 @@ public:
     void ReadSTL(std::string file_path, std::string file_name);
     void ExportVTK(std::string file_path, std::string file_name);
     void ExportSTL(std::string file_path, std::string file_name);
+    void SetIndexedMesh(
+        const std::vector<Vec3f>& positions,
+        const std::vector<std::array<std::int32_t, 3>>& triangles
+    );
+    bool IsClosedTwoManifold(std::string* error = nullptr) const;
 
     void GetSteps(std::int32_t cnt, std::int32_t index);
 

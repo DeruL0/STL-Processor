@@ -1169,6 +1169,12 @@ void HE_MeshData::Fairing(enum FMETHOD fairing) {
 		return;
 	}
 
+	constexpr float kFairingLambda = 0.5f;
+	std::vector<Vec3f> updatedPositions(HE_Vertexes.size());
+	for (std::size_t i = 0; i < HE_Vertexes.size(); i++) {
+		updatedPositions[i] = HE_Vertexes[i]->Pos;
+	}
+
 	for (std::int32_t i = 0; i < HE_Vertexes.size(); i++) {
 		HE_Vertex* temp = HE_Vertexes[i];
 		std::vector<HE_Vertex*> neighbors = GetVertexesFromVertex(temp);
@@ -1176,9 +1182,8 @@ void HE_MeshData::Fairing(enum FMETHOD fairing) {
 			continue;
 		}
 
-		float weightSum = 0.0f;
-		Vec3f step = Vec3f(0.0f, 0.0f, 0.0f);
-		Vec3f move = Vec3f(-temp->Pos.x, -temp->Pos.y, -temp->Pos.z);
+		float weightAbsSum = 0.0f;
+		Vec3f laplace = Vec3f(0.0f, 0.0f, 0.0f);
 		
 		for (int j = 0; j < neighbors.size(); j++) {
 			HE_Vertex* neighbor = neighbors[j];
@@ -1197,22 +1202,22 @@ void HE_MeshData::Fairing(enum FMETHOD fairing) {
 				continue;
 			}
 
-			weightSum += weight;
-			step.x += weight * neighbor->Pos.x;
-			step.y += weight * neighbor->Pos.y;
-			step.z += weight * neighbor->Pos.z;
+			weightAbsSum += std::fabs(weight);
+			laplace.x += weight * (neighbor->Pos.x - temp->Pos.x);
+			laplace.y += weight * (neighbor->Pos.y - temp->Pos.y);
+			laplace.z += weight * (neighbor->Pos.z - temp->Pos.z);
 		}
-		if (std::fabs(weightSum) <= FLT_EPSILON) {
+		if (weightAbsSum <= FLT_EPSILON) {
 			continue;
 		}
 
-		move.x += step.x / weightSum;
-		move.y += step.y / weightSum;
-		move.z += step.z / weightSum;
+		updatedPositions[i].x = temp->Pos.x + kFairingLambda * laplace.x / weightAbsSum;
+		updatedPositions[i].y = temp->Pos.y + kFairingLambda * laplace.y / weightAbsSum;
+		updatedPositions[i].z = temp->Pos.z + kFairingLambda * laplace.z / weightAbsSum;
+	}
 
-		temp->Pos.x += move.x;
-		temp->Pos.y += move.y;
-		temp->Pos.z += move.z;
+	for (std::size_t i = 0; i < HE_Vertexes.size(); i++) {
+		HE_Vertexes[i]->Pos = updatedPositions[i];
 	}
 }
 
@@ -1228,7 +1233,10 @@ float HE_MeshData::GetWeight(HE_Vertex* vertex, HE_Vertex* neighbor, enum FMETHO
 		);
 
 		float ans = sqrt(temp.x * temp.x + temp.y * temp.y + temp.z * temp.z);
-		return ans;
+		if (ans <= FLT_EPSILON) {
+			return 0.0f;
+		}
+		return 1.0f / ans;
 	}
 	default:
 		return 1.0f;
@@ -1268,7 +1276,7 @@ float HE_MeshData::GetWeightHarmonic(HE_Vertex* vertex, HE_Vertex* neighbor, enu
 			Vec3f diff3 = Vec3f(vertex->Pos.x - temp->Pos.x, vertex->Pos.y - temp->Pos.y, vertex->Pos.z - temp->Pos.z);
 
 			if (fairing == TAN) {
-				float contribution = tan(AngleBetweenVectors(diff0, diff1) / 2.0f);
+				float contribution = tan(AngleBetweenVectors(diff3, diff2) / 2.0f);
 				if (std::isfinite(contribution)) {
 					weightSum += contribution;
 				}

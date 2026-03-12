@@ -15,4 +15,6 @@ target_include_directories(MeshCore
 target_link_libraries(MeshCore
     PUBLIC
         Eigen
+    PRIVATE
+        tetgen
 )

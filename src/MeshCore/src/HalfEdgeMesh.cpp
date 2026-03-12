@@ -1,10 +1,41 @@
 ﻿#include "MeshCore/HalfEdgeMesh.h"
 #include "MeshMath.h"
 
+#include <sstream>
+#include <stdexcept>
+#include <unordered_map>
 #include <unordered_set>
+#include <utility>
 
 HE_MeshData::~HE_MeshData() {
     Clear();
+}
+
+HE_MeshData::HE_MeshData(HE_MeshData&& other) noexcept {
+    *this = std::move(other);
+}
+
+HE_MeshData& HE_MeshData::operator=(HE_MeshData&& other) noexcept {
+    if (this == &other) {
+        return *this;
+    }
+
+    Clear();
+
+    HE_Vertexes = std::move(other.HE_Vertexes);
+    HE_Edges = std::move(other.HE_Edges);
+    HE_Triangles = std::move(other.HE_Triangles);
+    New_HE_Triangles = std::move(other.New_HE_Triangles);
+    Indices32 = std::move(other.Indices32);
+    BoundaryLoops = std::move(other.BoundaryLoops);
+
+    other.HE_Vertexes.clear();
+    other.HE_Edges.clear();
+    other.HE_Triangles.clear();
+    other.New_HE_Triangles.clear();
+    other.Indices32.clear();
+    other.BoundaryLoops.clear();
+    return *this;
 }
 
 void HE_MeshData::Clear() {
@@ -48,6 +79,143 @@ void HE_MeshData::ClearTopology() {
     HE_Edges.clear();
     HE_Triangles.clear();
     New_HE_Triangles.clear();
+}
+
+void HE_MeshData::SetIndexedMesh(
+    const std::vector<Vec3f>& positions,
+    const std::vector<std::array<std::int32_t, 3>>& triangles
+) {
+    Clear();
+
+    HE_Vertexes.reserve(positions.size());
+    for (std::size_t i = 0; i < positions.size(); ++i) {
+        HE_Vertex* vertex = new HE_Vertex();
+        vertex->Index = static_cast<std::int32_t>(i);
+        vertex->Pos = positions[i];
+        HE_Vertexes.push_back(vertex);
+    }
+
+    HE_Triangles.reserve(triangles.size());
+    for (std::size_t i = 0; i < triangles.size(); ++i) {
+        const std::array<std::int32_t, 3>& tri = triangles[i];
+        if (tri[0] < 0 || tri[1] < 0 || tri[2] < 0 ||
+            static_cast<std::size_t>(tri[0]) >= positions.size() ||
+            static_cast<std::size_t>(tri[1]) >= positions.size() ||
+            static_cast<std::size_t>(tri[2]) >= positions.size()) {
+            std::ostringstream oss;
+            oss << "Triangle " << i << " has an out-of-range vertex index.";
+            throw std::runtime_error(oss.str());
+        }
+        if (tri[0] == tri[1] || tri[1] == tri[2] || tri[2] == tri[0]) {
+            std::ostringstream oss;
+            oss << "Triangle " << i << " is degenerate.";
+            throw std::runtime_error(oss.str());
+        }
+
+        std::vector<std::int32_t> vertexIndices = { tri[0], tri[1], tri[2] };
+        const Vec3f normal = CalTriNormal(
+            positions[tri[0]],
+            positions[tri[1]],
+            positions[tri[2]]
+        );
+        HE_Triangles.push_back(CreateHE_Triangle(static_cast<std::uint32_t>(i), normal, vertexIndices));
+    }
+
+    GetVertexesNormal();
+}
+
+bool HE_MeshData::IsClosedTwoManifold(std::string* error) const {
+    if (HE_Triangles.empty() || HE_Vertexes.empty()) {
+        if (error != nullptr) {
+            *error = "Mesh is empty.";
+        }
+        return false;
+    }
+
+    struct EdgeInfo {
+        int Count = 0;
+    };
+
+    std::unordered_map<std::uint64_t, EdgeInfo> edgeCounts;
+    edgeCounts.reserve(HE_Triangles.size() * 3);
+
+    auto encodeEdge = [](std::int32_t a, std::int32_t b) -> std::uint64_t {
+        const std::uint32_t lo = static_cast<std::uint32_t>(std::min(a, b));
+        const std::uint32_t hi = static_cast<std::uint32_t>(std::max(a, b));
+        return (static_cast<std::uint64_t>(lo) << 32u) | static_cast<std::uint64_t>(hi);
+    };
+
+    for (std::size_t triIndex = 0; triIndex < HE_Triangles.size(); ++triIndex) {
+        const HE_Triangle* triangle = HE_Triangles[triIndex];
+        if (triangle == nullptr) {
+            if (error != nullptr) {
+                *error = "Mesh contains a null triangle.";
+            }
+            return false;
+        }
+
+        const std::array<std::int32_t, 3> indices = {
+            triangle->VertexIndex0,
+            triangle->VertexIndex1,
+            triangle->VertexIndex2
+        };
+
+        if (indices[0] < 0 || indices[1] < 0 || indices[2] < 0 ||
+            static_cast<std::size_t>(indices[0]) >= HE_Vertexes.size() ||
+            static_cast<std::size_t>(indices[1]) >= HE_Vertexes.size() ||
+            static_cast<std::size_t>(indices[2]) >= HE_Vertexes.size()) {
+            if (error != nullptr) {
+                std::ostringstream oss;
+                oss << "Triangle " << triIndex << " has an invalid vertex index.";
+                *error = oss.str();
+            }
+            return false;
+        }
+
+        if (indices[0] == indices[1] || indices[1] == indices[2] || indices[2] == indices[0]) {
+            if (error != nullptr) {
+                std::ostringstream oss;
+                oss << "Triangle " << triIndex << " is degenerate.";
+                *error = oss.str();
+            }
+            return false;
+        }
+
+        const Vec3f& v0 = HE_Vertexes[indices[0]]->Pos;
+        const Vec3f& v1 = HE_Vertexes[indices[1]]->Pos;
+        const Vec3f& v2 = HE_Vertexes[indices[2]]->Pos;
+        if (GetTriArea(v0, v1, v2) <= 1e-8f) {
+            if (error != nullptr) {
+                std::ostringstream oss;
+                oss << "Triangle " << triIndex << " has near-zero area.";
+                *error = oss.str();
+            }
+            return false;
+        }
+
+        edgeCounts[encodeEdge(indices[0], indices[1])].Count++;
+        edgeCounts[encodeEdge(indices[1], indices[2])].Count++;
+        edgeCounts[encodeEdge(indices[2], indices[0])].Count++;
+    }
+
+    for (const auto& [edgeKey, info] : edgeCounts) {
+        if (info.Count != 2) {
+            if (error != nullptr) {
+                const std::uint32_t v0 = static_cast<std::uint32_t>(edgeKey >> 32u);
+                const std::uint32_t v1 = static_cast<std::uint32_t>(edgeKey & 0xffffffffu);
+                std::ostringstream oss;
+                if (info.Count < 2) {
+                    oss << "Mesh has a boundary edge (" << v0 << ", " << v1 << ").";
+                } else {
+                    oss << "Mesh has a non-manifold edge (" << v0 << ", " << v1 << ").";
+                }
+                *error = oss.str();
+            }
+            return false;
+        }
+    }
+
+    return true;
 }
 
 HE_Triangle* HE_MeshData::CreateHE_Triangle(std::uint32_t index, Vec3f normal, std::vector<std::int32_t>& VertexIndices) {
@@ -139,6 +307,9 @@ std::vector<HE_Vertex*> HE_MeshData::GetVertexesFromVertex(const HE_Vertex* vert
 std::vector<HE_Edge*> HE_MeshData::GetEdgesFromVertex(const HE_Vertex* vertex) {
 	std::vector<HE_Edge*> edges;
 	HE_Edge* start = vertex->Edge;
+	if (start == nullptr) {
+		return edges;
+	}
 	HE_Edge* temp = start;
 
 	//rule 1(!boundary): edge->pair->next
@@ -165,7 +336,9 @@ std::vector<HE_Edge*> HE_MeshData::GetEdgesFromVertex(const HE_Vertex* vertex) {
 		} while (temp != start);
 	}
 
-	edges.push_back(start);
+	if (edges.empty() || edges.back() != start) {
+		edges.push_back(start);
+	}
 	return edges;
 }
 

@@ -3,10 +3,12 @@
 	[
 		"D:/Projects/2.STL Repair/DX12/build/cmake_install.cmake",
 		"D:/Projects/2.STL Repair/DX12/build/third_party/cmake_install.cmake",
+		"D:/Projects/2.STL Repair/DX12/build/third_party/tetgen/cmake_install.cmake",
 		"D:/Projects/2.STL Repair/DX12/build/src/MeshCore/cmake_install.cmake",
 		"D:/Projects/2.STL Repair/DX12/build/src/DX12Engine/cmake_install.cmake",
 		"D:/Projects/2.STL Repair/DX12/build/src/GUI/cmake_install.cmake",
-		"D:/Projects/2.STL Repair/DX12/build/src/App/cmake_install.cmake"
+		"D:/Projects/2.STL Repair/DX12/build/src/App/cmake_install.cmake",
+		"D:/Projects/2.STL Repair/DX12/build/tests/cmake_install.cmake"
 	],
 	"Parallel" : false
 }

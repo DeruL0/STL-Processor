@@ -190,6 +190,14 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
       <Project>{F2C45D1B-75B6-3AE0-993A-20739F06FEFE}</Project>
       <Name>MeshCore</Name>
     </ProjectReference>
+    <ProjectReference Include="D:\Projects\2.STL Repair\DX12\build\tests\test_mesh_repair.vcxproj">
+      <Project>{09348156-7E55-3390-B247-2BB06D3E233D}</Project>
+      <Name>test_mesh_repair</Name>
+    </ProjectReference>
+    <ProjectReference Include="D:\Projects\2.STL Repair\DX12\build\third_party\tetgen\tetgen.vcxproj">
+      <Project>{E5A76C44-0211-3E33-86B3-922B932EC418}</Project>
+      <Name>tetgen</Name>
+    </ProjectReference>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
